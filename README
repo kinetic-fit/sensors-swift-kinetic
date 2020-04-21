@@ -1,0 +1,57 @@
+The Kinetic SDK is a simple translation library to convert the raw data coming from the inRide 2 sensor into usable Speed, Cadence and Power data.
+
+Your application is responsible for managing the BLE Peripheral state.
+
+The inRide Power Service has a UUID that can be grabbed from the KineticInRidePowerServiceUUID constant (NSString *)
+The 3 characteristic uuids can be found at:
+KineticInRidePowerServicePowerUUID
+	Notify: 20 bytes of power data.
+
+KineticInRidePowerServiceConfigUUID
+	Read / Notify: 20 bytes of current configuration (spindown time, update times, more)
+
+KineticInRidePowerServiceControlPointUUID
+	Write w/ Response: 3 - 11 bytes of command data.
+
+
+
+Methods may accept NSError parameters and may return Data Errors (201, 202, 203).
+Where systemId is a parameter, it is the value of the SystemId characteristic (2A23) of the Device Information Service (180A). It is 6 bytes long.
+
+
+// data is from the Power Service Config Characteristic (value property)-> 20 bytes long.
+[KineticInRide processConfigurationData:data error:&error];
+
+// data is from the Power Service Power Characteristic (value property)-> 20 bytes long. systemId is 6 bytes long (see above).
+[KineticInRide processPowerData:data systemId:systemIdBytes error:&error];
+
+
+
+All of these methods return a NSData object to write to the Control Point Char. Write w/ response.
+To prevent interruptions in the BLE transmit rate, the command result code is embedded in the next Power Value update.
+
+
+// Starting the calibration process will increase the update interval from the sensor to 4x / second.
+//
+// The sensor state in the Power value will indicate what state the sensor is in:
+// Spindown Idle -> Spindown Ready -> Spindown Active -> Normal
+// Idle = Accelerate to over ~20mph
+// Ready = Start Coasting and DO NOT PEDAL (if they pedal, it will be detected and the process restarted)
+// Active = Coasting. Once the time interval is calculated from ~19mph to ~11mph, the time is checked.
+//
+// The Power Value will indicate the calibration result (too slow, too fast, successful, "middle").
+// Too slow = tighten roller.
+// Too fast = loosen roller.
+// Middle = slower than 2 seconds but faster than 4.7 seconds. The rider may have the proflywheel on.
+//		If they have a pro flywheel, they should loosen the roller. If they don't, then need to tighten the roller.
+//
+// The pro flywheel is more or less auto-detected. It is very, very difficult to have a too slow result with a normal flywheel.
+//
+[KineticInRide startCalibrationCommandData:systemIdBytes error:&error];
+
+// You do not need to call Stop if the calibration process completes (success or fail, doesn't matter).
+// You may "cancel" the calibration process using this command data.
+[KineticInRide stopCalibrationCommandData:systemIdBytes error:&error];
+
+// 1000 = 1x / second. 500 = 2x / second. 250 = 4x / second.
+[KineticInRide configureSensorCommandData:KineticInRideUpdateRateMillis1000 error:&error];
