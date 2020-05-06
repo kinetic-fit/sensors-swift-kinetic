@@ -102,6 +102,7 @@ typedef NS_ENUM (uint8_t, KineticControlCalibrationState)
 
 @end
 
+
 /*! Smart Control static Serialization and Deserialization Interface */
 @interface KineticControl: NSObject
 
@@ -165,7 +166,6 @@ typedef NS_ENUM (uint8_t, KineticControlCalibrationState)
 + (NSData * _Nullable)setResistanceBrake:(float)percent error:(NSError * _Nullable * _Nullable)error;
 
 
-
 /*!
  Creates the Command to put the Resistance Unit into Simulation mode.
  
@@ -203,15 +203,6 @@ typedef NS_ENUM (uint8_t, KineticControlCalibrationState)
  */
 + (NSData * _Nullable)stopCalibration:(NSError * _Nullable * _Nullable)error;
 
-
-/*!
- Creates the Command to set a custom name in the Advertisement Data.
- 
- @param deviceName The new name for the sensor.
- 
- @return Write this NSData to the Control Point Characteristic (w/ response)
- */
-+ (NSData * _Nullable)setDeviceName:(NSString * _Nonnull)deviceName error:(NSError * _Nullable * _Nullable)error;
 
 /*! Utility function to convert a Control System ID to a NSString */
 + (NSString * _Nonnull)systemIdToString:(NSData * _Nonnull)systemId;
@@ -267,6 +258,7 @@ typedef NS_ENUM (uint16_t, KineticControlUSBCharacteristic)
 /*! Characteristic Packet Data (up to 20 bytes). Presence indicated in type bitmask. */
 @property (readonly) NSData * _Nullable data;
 
+
 @end
 
 
@@ -295,27 +287,3 @@ typedef NS_ENUM (uint16_t, KineticControlUSBCharacteristic)
 + (NSArray<KineticControlUSBPacket *> * _Nonnull)usbProcessData:(NSData * _Nonnull)data;
 
 @end
-
-
-
-
-@interface KineticControlDebugData: NSObject
-@property (readonly) float targetPosition;
-@property (readonly) float position;
-@property (readonly) int16_t tempSensor;
-@property (readonly) float tempDie;
-@property (readonly) uint32_t temperature;
-@property (readonly) int16_t homeAccuracy;
-@property (readonly) int16_t encoder;
-@property (readonly) uint16_t bleBuild;
-@end
-
-
-/*! Smart Control Firmware Update State */
-typedef NS_ENUM (uint8_t, KineticControlFirmwareUpdateState)
-{
-    KineticControlFirmwareUpdateStateIdle       = 0x00,
-    KineticControlFirmwareUpdateStateUpdating   = 0x40,
-    KineticControlFirmwareUpdateStateOOO        = 0x80,
-    KineticControlFirmwareUpdateStateFailed     = 0xC0,
-};

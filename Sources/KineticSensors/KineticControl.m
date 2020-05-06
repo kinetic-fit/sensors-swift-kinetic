@@ -4,7 +4,6 @@
 
 #import "KineticControl.h"
 #import "KineticConstants.h"
-//#import "KineticControl_Private.h"
 #import "SmartControl.h"
 #import "KineticSDK.h"
 
@@ -76,29 +75,15 @@ typedef NS_ENUM (NSInteger, KineticControlErrorCode)
 @property uint8_t brakeOffset;
 @property double brakeCalibrationThresholdKPH;
 
-// Private
+// Internal Properties
 @property uint32_t tickRate;
-@property KineticControlFirmwareUpdateState firmwareUpdateState;
+@property uint8_t firmwareUpdateState;
 @property uint8_t firmwareUpdateExpectedPacket;
 @property uint16_t systemStatus;
 @property uint8_t noiseFilter;
 @end
 
 @implementation KineticControlConfigData
-@end
-
-@interface KineticControlDebugData ()
-@property float targetPosition;
-@property float position;
-@property int16_t tempSensor;
-@property float tempDie;
-@property uint32_t temperature;
-@property int16_t homeAccuracy;
-@property int16_t encoder;
-@property uint16_t bleBuild;
-@end
-
-@implementation KineticControlDebugData
 @end
 
 
@@ -141,7 +126,7 @@ typedef NS_ENUM (NSInteger, KineticControlErrorCode)
         
         configData.updateRate = cData.updateRate;
         configData.tickRate = cData.tickRate;
-        configData.firmwareUpdateState = (KineticControlFirmwareUpdateState)(cData.firmwareUpdateState & 0xC0);
+        configData.firmwareUpdateState = (cData.firmwareUpdateState & 0xC0);
         configData.firmwareUpdateExpectedPacket = (cData.firmwareUpdateState & 0x3F);
         configData.systemStatus = cData.systemStatus;
         configData.calibrationState = (KineticControlCalibrationState)cData.calibrationState;
@@ -207,33 +192,6 @@ typedef NS_ENUM (NSInteger, KineticControlErrorCode)
     return [NSData dataWithBytes:&command length:sizeof(command)];
 }
 
-+ (NSData * _Nullable)setDeviceName:(NSString * _Nonnull)deviceName error:(NSError * _Nullable * _Nullable)error
-{
-    NSUInteger nameLength = MIN(deviceName.length, 18);
-    
-    uint8_t writeData[2 + nameLength];
-    writeData[0] = CTRL_SET_NAME;
-    NSData * nameData = [deviceName dataUsingEncoding:NSUTF8StringEncoding allowLossyConversion:NO];
-    uint8_t * nameBytes = (uint8_t *)nameData.bytes;
-    for (NSUInteger i = 0; i < nameLength; i++) {
-        writeData[1 + i] = nameBytes[i];
-    }
-    writeData[1 + nameLength] = arc4random_uniform(0x100); // nonce
-    uint8_t dataLength = 2 + nameLength;
-    
-    // Obfustate Packet
-    uint8_t hashSeed = 0x42;
-    uint8_t hash = [self hash8WithSeed:hashSeed data:&writeData[dataLength - 1] length:1];
-    for (unsigned index = 0; index < dataLength - 1; index++) {
-        uint8_t temp = writeData[index];
-        writeData[index] ^= hash;
-        hash = [self hash8WithSeed:hash data:&temp length:1];
-    }
-    
-    return [NSData dataWithBytes:writeData length:dataLength];
-}
-
-
 ////////////////////////////////////
 // Objective C Internal Methods
 ////////////////////////////////////
@@ -241,44 +199,6 @@ typedef NS_ENUM (NSInteger, KineticControlErrorCode)
 + (NSString *)systemIdToString:(NSData *)systemId
 {
     return [KineticSDK systemIdToString:systemId];
-}
-
-+ (NSData * _Nullable)firmwareUpdateChunk:(NSData *)firmware position:(NSInteger *)position systemId:(NSData * _Nullable)systemId
-{
-    if (firmware != nil) {
-        if (firmware.length >= 0xFC00) {
-            return nil;
-        }
-        uint16_t pos = *position;
-        NSInteger payloadSize = MIN(17, firmware.length - pos);
-        
-        uint8_t writeData[20];
-        writeData[0] = CTRL_FIRMWARE;
-        
-        uint8_t packetNum = (pos == 0) ? 0x80 : ((pos/17) & 0x3F);    // high bit indicates the start of the firmware update, bit 6 is reserved, and the low 6 bits are a packet sequence number
-        writeData[1] = packetNum;
-        
-        for (NSInteger index = 0; index < payloadSize; index++, pos++) {
-            writeData[index + 2] = ((const uint8_t*)[firmware bytes])[pos];
-        }
-        
-        writeData[payloadSize + 2] = arc4random_uniform(0x100);                   // nonce
-        // Obfustate Packet
-        uint8_t hashSeed = 0x42;
-        // if the systemId is passed in (only on pre 1024), use the sysId as the hash seed
-        if (systemId != nil) {
-            hashSeed = [self hash8WithSeed:0 data:systemId.bytes length:systemId.length];
-        }
-        uint8_t hash = [self hash8WithSeed:hashSeed data:&writeData[payloadSize + 2] length:1];
-        for (unsigned index = 0; index < payloadSize + 2; index++) {
-            uint8_t temp = writeData[index];
-            writeData[index] ^= hash;
-            hash = [self hash8WithSeed:hash data:&temp length:1];
-        }
-        *position = pos;
-        return [NSData dataWithBytes:writeData length:payloadSize + 3];
-    }
-    return nil;
 }
 
 // CRC-8, using x^8 + x^2 + x + 1 polynomial.
@@ -329,7 +249,6 @@ typedef NS_ENUM (NSInteger, KineticControlErrorCode)
 {
     return [self hash8WithSeed:crc ^ 0xFF data:buffer length:length] ^ 0xFF;
 }
-
 
 
 ////////////////////////////////////
@@ -443,178 +362,6 @@ typedef NS_ENUM (NSInteger, KineticControlErrorCode)
         }
     }
     return packets;
-}
-
-
-
-
-
-
-////////////////////////////////////
-// Objective C Debug Methods
-////////////////////////////////////
-
-+ (KineticControlDebugData * _Nullable)processDebug:(NSData *)data error:(NSError * _Nullable * _Nullable)error
-{
-    if (data.length >= 13) {
-        uint8_t hashSeed = 0x42;
-        uint8_t inData[data.length];
-        memcpy(inData, data.bytes, data.length);
-        uint8_t hash = [self hash8WithSeed:hashSeed data:&inData[data.length-1] length:1];
-        for (unsigned index = 0; index < (data.length-1); index++) {
-            inData[index] ^= hash;
-            hash = [self hash8WithSeed:hash data:&inData[index] length:1];
-        }
-        
-        KineticControlDebugData *debugData = [[KineticControlDebugData alloc] init];
-        
-        uint16_t targetPosition = ((uint16_t)inData[0] << 8) | (uint16_t)inData[1];
-        float targetPositionN = (float)targetPosition / 65535.f;
-        debugData.targetPosition = targetPositionN;
-        uint16_t actualPosition = ((uint16_t)inData[2] << 8) | (uint16_t)inData[3];
-        float actualPositionN = (float)actualPosition / 65535.f;
-        debugData.position = actualPositionN;
-        debugData.tempSensor = ((int16_t)inData[4] << 8) | (int16_t)inData[5];
-        debugData.tempDie = ((int16_t)inData[6] << 8) | (int16_t)inData[7];
-        debugData.temperature = ((uint16_t)inData[8] << 8) | (uint16_t)inData[9];
-        debugData.homeAccuracy = ((int16_t)inData[10] << 8) | (int16_t)inData[11];
-        
-        if (data.length >= 14) {
-            debugData.bleBuild = ((uint16_t)inData[12] << 8) | (uint16_t)inData[13];
-        }
-        if (data.length >= 16) {
-            debugData.encoder = ((int16_t)inData[14] << 8) | (int16_t)inData[15];
-        }
-        
-        return debugData;
-    }
-    if (error != nil) {
-        NSString *desc = @"Invalid Debug Data";
-        NSDictionary *userInfo = @{ NSLocalizedDescriptionKey : desc };
-        *error = [NSError errorWithDomain:ERROR_DOMAIN code:ControlErrorCodeInvalidData userInfo:userInfo];
-    }
-    return nil;
-}
-
-+ (NSData *)setNoiseFilter:(uint8_t)strength error:(NSError *__autoreleasing  _Nullable *)error
-{
-    strength = MIN(strength, 10);
-    
-    uint8_t writeData[20];
-    writeData[0] = CTRL_SET_NOISE_FILTER;
-    writeData[1] = strength;
-    writeData[2] = arc4random_uniform(0x100); // nonce
-    uint8_t dataLength = 3;
-    
-    // Obfustate Packet
-    uint8_t hashSeed = 0x42;
-    uint8_t hash = [self hash8WithSeed:hashSeed data:&writeData[dataLength - 1] length:1];
-    for (unsigned index = 0; index < dataLength - 1; index++) {
-        uint8_t temp = writeData[index];
-        writeData[index] ^= hash;
-        hash = [self hash8WithSeed:hash data:&temp length:1];
-    }
-    
-    return [NSData dataWithBytes:writeData length:dataLength];
-}
-
-+ (NSData *)setBrakeOffset:(uint8_t)offset error:(NSError * __autoreleasing * _Nullable)error
-{
-    uint8_t writeData[20];
-    writeData[0] = CTRL_SET_BRAKE_OFFSET;
-    writeData[1] = offset;
-    writeData[2] = arc4random_uniform(0x100); // nonce
-    uint8_t dataLength = 3;
-    
-    // Obfustate Packet
-    uint8_t hashSeed = 0x42;
-    uint8_t hash = [self hash8WithSeed:hashSeed data:&writeData[dataLength - 1] length:1];
-    for (unsigned index = 0; index < dataLength - 1; index++) {
-        uint8_t temp = writeData[index];
-        writeData[index] ^= hash;
-        hash = [self hash8WithSeed:hash data:&temp length:1];
-    }
-    
-    return [NSData dataWithBytes:writeData length:dataLength];
-}
-
-+ (NSData *)setBrakeStrength:(uint8_t)strength error:(NSError * __autoreleasing * _Nullable)error
-{
-    uint8_t writeData[20];
-    writeData[0] = CTRL_SET_BRAKE_STRENGTH;
-    writeData[1] = strength;
-    writeData[2] = arc4random_uniform(0x100); // nonce
-    uint8_t dataLength = 3;
-    
-    // Obfustate Packet
-    uint8_t hashSeed = 0x42;
-    uint8_t hash = [self hash8WithSeed:hashSeed data:&writeData[dataLength - 1] length:1];
-    for (unsigned index = 0; index < dataLength - 1; index++) {
-        uint8_t temp = writeData[index];
-        writeData[index] ^= hash;
-        hash = [self hash8WithSeed:hash data:&temp length:1];
-    }
-    
-    return [NSData dataWithBytes:writeData length:dataLength];
-}
-
-+ (NSData *)setMotorSpeed:(uint16_t)speed error:(NSError * _Nullable * _Nullable)error
-{
-    uint8_t writeData[20];
-    writeData[0] = CTRL_MOTOR_SPEED;
-    writeData[1] = (uint16_t)speed >> 8;
-    writeData[2] = (uint16_t)speed;
-    writeData[3] = arc4random_uniform(0x100); // nonce
-    uint8_t dataLength = 4;
-    
-    // Obfustate Packet
-    uint8_t hashSeed = 0x42;
-    uint8_t hash = [self hash8WithSeed:hashSeed data:&writeData[dataLength - 1] length:1];
-    for (unsigned index = 0; index < dataLength - 1; index++) {
-        uint8_t temp = writeData[index];
-        writeData[index] ^= hash;
-        hash = [self hash8WithSeed:hash data:&temp length:1];
-    }
-    
-    return [NSData dataWithBytes:writeData length:dataLength];
-}
-+ (NSData * _Nullable)setHardwareRev:(uint8_t)hardwareRev error:(NSError * _Nullable * _Nullable)error
-{
-    uint8_t writeData[20];
-    writeData[0] = CTRL_SET_HARDWARE_REV;
-    writeData[1] = hardwareRev;
-    writeData[2] = arc4random_uniform(0x100); // nonce
-    uint8_t dataLength = 3;
-    
-    // Obfustate Packet
-    uint8_t hashSeed = 0x42;
-    uint8_t hash = [self hash8WithSeed:hashSeed data:&writeData[dataLength - 1] length:1];
-    for (unsigned index = 0; index < dataLength - 1; index++) {
-        uint8_t temp = writeData[index];
-        writeData[index] ^= hash;
-        hash = [self hash8WithSeed:hash data:&temp length:1];
-    }
-    
-    return [NSData dataWithBytes:writeData length:dataLength];
-}
-
-+ (NSData *)testRange:(NSError * _Nullable * _Nullable)error
-{
-    uint8_t writeData[20];
-    writeData[0] = CTRL_GO_HOME;
-    writeData[1] = arc4random_uniform(0x100); // nonce
-    uint8_t dataLength = 2;
-    
-    // Obfustate Packet
-    uint8_t hashSeed = 0x42;
-    uint8_t hash = [self hash8WithSeed:hashSeed data:&writeData[dataLength - 1] length:1];
-    for (unsigned index = 0; index < dataLength - 1; index++) {
-        uint8_t temp = writeData[index];
-        writeData[index] ^= hash;
-        hash = [self hash8WithSeed:hash data:&temp length:1];
-    }
-    
-    return [NSData dataWithBytes:writeData length:dataLength];
 }
 
 @end
